@@ -10,7 +10,21 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-echo "=== Installing Astro DevAish Skills & Global CLI Suite ==="
+REPO_SLUG="DevendraKhati/astro-devaish-suite"
+REPO_URL="https://github.com/${REPO_SLUG}"
+
+echo "=============================================================================="
+echo " 🕉️  Astro DevAish Master Suite v2.0 — Vedic Jyotish & Anka-Jyotish Installer"
+echo " ⭐  GitHub Repository: ${REPO_URL}"
+echo "=============================================================================="
+echo "👉 If this suite helps your Vedic Astrology & Numerology workflow, please"
+echo "   STAR the repository on GitHub: ${REPO_URL}"
+if command -v gh >/dev/null 2>&1; then
+    if gh api --method PUT "/user/starred/${REPO_SLUG}" >/dev/null 2>&1; then
+        echo "⭐ Thank you! Automatically starred ${REPO_SLUG} via GitHub CLI."
+    fi
+fi
+echo ""
 
 # 1. Install Python dependencies & package globally
 if command -v pip3 >/dev/null 2>&1; then
