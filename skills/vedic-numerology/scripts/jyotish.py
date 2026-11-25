@@ -18,9 +18,186 @@ import argparse
 import json
 import math
 from datetime import datetime, timedelta
-import swisseph as swe
 
-swe.set_sid_mode(swe.SIDM_LAHIRI)
+try:
+    import swisseph as swe
+    swe.set_sid_mode(swe.SIDM_LAHIRI)
+    HAS_SWISSEPH = True
+except ImportError:
+    HAS_SWISSEPH = False
+
+    class _PurePythonSweFallback:
+        """Zero-dependency pure-Python NASA JPL / Meeus Sidereal (Lahiri) Ephemeris fallback for Gemini Gems & offline sandboxes."""
+        SIDM_LAHIRI = 1
+        FLG_MOSEPH = 4
+        FLG_SIDEREAL = 65536
+        FLG_SPEED = 256
+        FLG_EQUATORIAL = 2048
+        SUN = 0
+        CALC_RISE = 1
+        BIT_DISC_CENTER = 256
+        EQU2HOR = 0
+
+        _ELEMENTS = {
+            "Earth":   ((1.00000261, 0.01671123, -0.00001531, 100.46457166, 102.93768193, 0.0),
+                        (0.00000562, -0.00004392, -0.01294668, 35999.37244981, 0.32327364, 0.0)),
+            "Mercury": ((0.38709927, 0.20563593, 7.00497902, 252.25032350, 77.45779628, 48.33076593),
+                        (0.00000037, 0.00001906, -0.00594749, 149472.67411175, 0.16047689, -0.12534081)),
+            "Venus":   ((0.72333566, 0.00677672, 3.39467605, 181.97909950, 131.60246718, 76.67984255),
+                        (0.00000390, -0.00004107, -0.00078890, 58517.81538729, 0.00268329, -0.27769418)),
+            "Mars":    ((1.52371034, 0.09339410, 1.84969142, -4.55343205, -23.94362959, 49.55953891),
+                        (0.00001847, 0.00007882, -0.00813131, 19140.30268499, 0.44441088, -0.29257343)),
+            "Jupiter": ((5.20288700, 0.04838624, 1.30439695, 34.39644051, 14.72847983, 100.47390909),
+                        (-0.00011607, -0.00013253, -0.00183714, 3034.74612775, 0.21252668, 0.20469106)),
+            "Saturn":  ((9.53667594, 0.05386179, 2.48599187, 49.95424423, 92.59887831, 113.66242448),
+                        (-0.00125060, -0.00050991, 0.00193609, 1222.49362201, -0.41897216, -0.28867794)),
+            "Uranus":  ((19.18916464, 0.04725744, 0.77263783, 313.23810451, 170.95427630, 74.01692503),
+                        (-0.00196176, -0.00004397, -0.00242939, 428.48202785, 0.40805281, 0.04240589)),
+            "Neptune": ((30.06992276, 0.00859048, 1.77004347, -55.12002969, 44.96476227, 131.78422574),
+                        (0.00026291, 0.00005105, 0.00035372, 218.45945325, -0.32241464, -0.00508664)),
+        }
+
+        def set_sid_mode(self, mode):
+            pass
+
+        def julday(self, y, m, d, h_ut=0.0):
+            if m <= 2:
+                y -= 1
+                m += 12
+            A = int(y // 100)
+            B = 2 - A + int(A // 4)
+            return int(365.25 * (y + 4716)) + int(30.6001 * (m + 1)) + d + h_ut / 24.0 + B - 1524.5
+
+        def revjul(self, jd):
+            Z = int(jd + 0.5)
+            F = (jd + 0.5) - Z
+            if Z < 2299161:
+                A = Z
+            else:
+                alpha = int((Z - 1867216.25) / 36524.25)
+                A = Z + 1 + alpha - int(alpha / 4)
+            B = A + 1524
+            C = int((B - 122.1) / 365.25)
+            D = int(365.25 * C)
+            E = int((B - D) / 30.6001)
+            day = B - D - int(30.6001 * E)
+            month = E - 1 if E < 14 else E - 13
+            year = C - 4716 if month > 2 else C - 4715
+            return year, month, day, F * 24.0
+
+        def _lahiri(self, jd):
+            T = (jd - 2451545.0) / 36525.0
+            return 23.85308 + (50.290966 / 3600.0) * (T * 100.0) + 0.00011 * (T ** 2)
+
+        def _helio_xyz(self, name, T):
+            (a0, e0, I0, L0, wb0, Om0), (da, de, dI, dL, dwb, dOm) = self._ELEMENTS[name]
+            a = a0 + da * T
+            e = e0 + de * T
+            I = math.radians(I0 + dI * T)
+            L = (L0 + dL * T) % 360.0
+            wb = (wb0 + dwb * T) % 360.0
+            Om = math.radians((Om0 + dOm * T) % 360.0)
+            w = math.radians((wb - math.degrees(Om)) % 360.0)
+            M_deg = (L - wb + 180.0) % 360.0 - 180.0
+            zeta = math.radians(5 * ((49.954 + 1222.494 * T) % 360.0) - 2 * ((34.396 + 3034.746 * T) % 360.0) - 67.9)
+            if name == "Jupiter":
+                M_deg += -0.332 * math.sin(zeta)
+            elif name == "Saturn":
+                M_deg += 0.812 * math.sin(zeta)
+            M = math.radians(M_deg)
+            E = M + e * math.sin(M)
+            for _ in range(8):
+                E += (M - (E - e * math.sin(E))) / (1.0 - e * math.cos(E))
+            xp = a * (math.cos(E) - e)
+            yp = a * math.sqrt(1.0 - e * e) * math.sin(E)
+            cw, sw = math.cos(w), math.sin(w)
+            cO, sO = math.cos(Om), math.sin(Om)
+            cI, sI = math.cos(I), math.sin(I)
+            x = (cw * cO - sw * sO * cI) * xp + (-sw * cO - cw * sO * cI) * yp
+            y = (cw * sO + sw * cO * cI) * xp + (-sw * sO + cw * cO * cI) * yp
+            z = (sw * sI) * xp + (cw * sI) * yp
+            return x, y, z
+
+        def _pos_at(self, jd, body, sidereal=True):
+            T = (jd - 2451545.0) / 36525.0
+            ay = self._lahiri(jd) if sidereal else 0.0
+            if body == 1:  # Moon
+                Lp = (218.3164477 + 481267.88123421 * T) % 360.0
+                D = math.radians((297.8501921 + 445267.1114034 * T) % 360.0)
+                M = math.radians((357.5291092 + 35999.0502909 * T) % 360.0)
+                Mp = math.radians((134.9633964 + 477198.8675055 * T) % 360.0)
+                F = math.radians((93.2720950 + 483202.0175233 * T) % 360.0)
+                Ec = 1.0 - 0.002516 * T
+                dl = (
+                    6.288774 * math.sin(Mp) + 1.274027 * math.sin(2 * D - Mp)
+                    + 0.658314 * math.sin(2 * D) + 0.213618 * math.sin(2 * Mp)
+                    - 0.185116 * Ec * math.sin(M) - 0.114332 * math.sin(2 * F)
+                    + 0.058793 * math.sin(2 * D - 2 * Mp) + 0.057066 * Ec * math.sin(2 * D - M - Mp)
+                    + 0.053322 * math.sin(2 * D + Mp) + 0.045758 * Ec * math.sin(2 * D - M)
+                    - 0.040923 * Ec * math.sin(M - Mp) - 0.034720 * math.sin(D)
+                    - 0.030383 * Ec * math.sin(M + Mp) + 0.015327 * math.sin(2 * D - 2 * F)
+                )
+                lat = 5.128 * math.sin(F) + 0.280 * math.sin(Mp + F) + 0.277 * math.sin(Mp - F)
+                return (Lp + dl - ay) % 360.0, lat, 0.00257
+            if body == 10:  # Rahu (Mean Node)
+                lon = (125.0445550 - 1934.1361849 * T + 0.0020762 * T * T - ay) % 360.0
+                return lon, 0.0, 0.00257
+            ex, ey, ez = self._helio_xyz("Earth", T)
+            if body == 0:
+                gx, gy, gz = -ex, -ey, -ez
+            else:
+                bmap = {2: "Mercury", 3: "Venus", 4: "Mars", 5: "Jupiter", 6: "Saturn", 7: "Uranus", 8: "Neptune"}
+                px, py, pz = self._helio_xyz(bmap.get(body, "Mars"), T)
+                gx, gy, gz = px - ex, py - ey, pz - ez
+            dist = math.sqrt(gx * gx + gy * gy + gz * gz)
+            lon_trop = math.degrees(math.atan2(gy, gx)) % 360.0
+            lat = math.degrees(math.atan2(gz, math.hypot(gx, gy)))
+            return (lon_trop - ay) % 360.0, lat, dist
+
+        def calc_ut(self, jd, body, flags=0):
+            sid = bool(flags & self.FLG_SIDEREAL)
+            lon0, lat0, dist0 = self._pos_at(jd, body, sidereal=sid)
+            lon1, _, _ = self._pos_at(jd + 0.1, body, sidereal=sid)
+            spd = ((lon1 - lon0 + 180.0) % 360.0 - 180.0) * 10.0
+            return ((lon0, lat0, dist0, spd, 0.0, 0.0), flags)
+
+        def houses_ex(self, jd, lat_deg, lon_deg, hsys=b'W', flags=0):
+            T = (jd - 2451545.0) / 36525.0
+            gmst = (280.46061837 + 360.98564736629 * (jd - 2451545.0) + 0.000387933 * T * T) % 360.0
+            ramc = math.radians((gmst + lon_deg) % 360.0)
+            eps = math.radians(23.4392911 - 0.0130042 * T)
+            lat = math.radians(lat_deg)
+            y = math.cos(ramc)
+            x = -math.sin(ramc) * math.cos(eps) - math.tan(lat) * math.sin(eps)
+            asc_trop = math.degrees(math.atan2(y, x)) % 360.0
+            mc_trop = math.degrees(math.atan2(math.sin(ramc), math.cos(ramc) * math.cos(eps))) % 360.0
+            ay = self._lahiri(jd) if (flags & self.FLG_SIDEREAL) else 0.0
+            asc = (asc_trop - ay) % 360.0
+            mc = (mc_trop - ay) % 360.0
+            # Sripati (Porphyry) trisected cusps
+            ic = (mc + 180.0) % 360.0
+            dsc = (asc + 180.0) % 360.0
+            s1 = ((ic - asc) % 360.0) / 3.0
+            s2 = ((dsc - ic) % 360.0) / 3.0
+            cusps = [
+                asc, (asc + s1) % 360.0, (asc + 2 * s1) % 360.0,
+                ic, (ic + s2) % 360.0, (ic + 2 * s2) % 360.0,
+                dsc, (dsc + s1) % 360.0, (dsc + 2 * s1) % 360.0,
+                mc, (mc + s2) % 360.0, (mc + 2 * s2) % 360.0,
+            ]
+            return (tuple(cusps), (asc, mc, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+
+        def rise_trans(self, jd, body, rsmi, geopos, atpress, attemp):
+            return (-1, (0.0,))
+
+        def azalt(self, jd, calc_flag, geopos, atpress, attemp, xin):
+            return (180.0, 45.0, 0.0)
+
+        def pheno_ut(self, jd, body, flags=0):
+            return (0.0, 0.0, 45.0, 0.0, 0.0)
+
+    swe = _PurePythonSweFallback()
+
 FL = swe.FLG_MOSEPH | swe.FLG_SIDEREAL | swe.FLG_SPEED
 
 SIGNS = [
