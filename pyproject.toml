@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "astro-devaish-suite"
+version = "2.0.0"
+description = "Astro DevAish Classical Vedic Jyotish (Parashari, Jaimini, KP, Ganita) & Vedic Anka-Jyotish Suite"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "pyswisseph>=2.10.0",
+]
+
+[tool.setuptools]
+py-modules = ["jyotish", "numerology", "vedastro_client", "astro_devaish"]
+
+[project.scripts]
+jyotish = "jyotish:cli_main"
+vedic-jyotish = "jyotish:cli_main"
+numerology = "numerology:cli_main"
+vedic-numerology = "numerology:cli_main"
+astro-devaish = "astro_devaish:main"
+astro-devaish-suite = "astro_devaish:main"
